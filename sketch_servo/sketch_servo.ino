@@ -4,75 +4,63 @@
 const int pinoLedVerde    = 2;  // LED que pisca no acesso liberado
 const int pinoLedVermelho = 3;  // LED que acende no acesso negado
 const int pinoBuzzer      = 4;  // Buzzer para os efeitos sonoros
-const int pinoServo       = 5;  // Pino de sinal do Servo Motor (Fio Laranja)
+const int pinoServo       = 5;  // Pino de sinal do Servo Motor
 
-Servo meuServo; // Cria o objeto para controlar o servo
+Servo meuServo; 
 
 void setup() {
-  // Configura os pinos como saídas do Arduino
   pinMode(pinoLedVerde, OUTPUT);
   pinMode(pinoLedVermelho, OUTPUT);
   pinMode(pinoBuzzer, OUTPUT);
 
-  // Inicializa o servo no pino correto
   meuServo.attach(pinoServo);
 
-  // Garante que tudo comece desligado e a trava comece TRANCADA (0 graus)
+  // Tudo começa desligado e trancado (0 graus)
   digitalWrite(pinoLedVerde, LOW);
   digitalWrite(pinoLedVermelho, LOW);
   digitalWrite(pinoBuzzer, LOW);
-  meuServo.write(0); // 0 graus = Posição Trancada
+  meuServo.write(0); 
 
-  // Inicializa a comunicação Serial a 9600 baud (mesma velocidade do Python)
-  Serial.begin(9600);
+  Serial.begin(9600); // Inicializa a comunicação com o Python
 }
 
 void loop() {
-  // Verifica se o Python enviou algum caractere pela porta serial
   if (Serial.available() > 0) {
-    char sinalRecebido = Serial.read(); // Lê o byte enviado
+    char sinalRecebido = Serial.read(); 
 
-    // --- CASO 1: ACESSO LIBERADO (Python enviou '1') ---
+    // --- CASO 1: VITOR OU NATHAN RECONHECIDOS (Sinal '1') ---
     if (sinalRecebido == '1') {
-      // 1. Gira o Servo Motor para a posição aberta (90 graus)
-      meuServo.write(90); 
+      meuServo.write(90); // Gira o servo para abrir a tranca
 
-      // 2. Efeito Sonoro Alegre (Bip Duplo Rápido e Agudo) + Pisca LED Verde
-      tone(pinoBuzzer, 1500); 
-      digitalWrite(pinoLedVerde, HIGH); 
+      // Efeito Sonoro Alegre (Bip Duplo Rápido e Agudo: Bip-Bip!)
+      tone(pinoBuzzer, 1500);            // Som agudo
+      digitalWrite(pinoLedVerde, HIGH);  // Acende LED Verde
       delay(150);
       noTone(pinoBuzzer);
-      digitalWrite(pinoLedVerde, LOW);  
+      digitalWrite(pinoLedVerde, LOW);   // Apaga LED Verde (efeito pisca)
       delay(100);
       
-      tone(pinoBuzzer, 1800); 
-      digitalWrite(pinoLedVerde, HIGH); 
+      tone(pinoBuzzer, 1800);            // Som mais agudo ainda
+      digitalWrite(pinoLedVerde, HIGH);  // Pisca o LED Verde de novo
       delay(150);
       noTone(pinoBuzzer);
       digitalWrite(pinoLedVerde, LOW);
 
-      // 3. Mantém a tranca aberta por 4 segundos para a pessoa passar
-      delay(4000); 
-
-      // 4. Move o Servo de volta para fechar a trava (0 graus)
-      meuServo.write(0); 
+      delay(4000); // Mantém a porta aberta por 4 segundos
+      meuServo.write(0); // Tranca novamente
     }
 
-    // --- CASO 2: ACESSO NEGADO / DESCONHECIDO (Python enviou '0') ---
+    // --- CASO 2: DESCONHECIDO DETECTADO (Sinal '0') ---
     else if (sinalRecebido == '0') {
-      // 1. Garante que o servo continua na posição trancada (0 graus)
-      meuServo.write(0); 
+      meuServo.write(0); // Garante que continua trancado
+      digitalWrite(pinoLedVermelho, HIGH); // Acende o LED Vermelho Fixo
 
-      // 2. Acende o LED Vermelho fixo
-      digitalWrite(pinoLedVermelho, HIGH);
-
-      // 3. Efeito Sonoro de Alerta (Som Grave, Longo e Contínuo)
-      tone(pinoBuzzer, 400); // Som grave de erro (400Hz)
+      // Efeito Sonoro de Alerta (Som Grave, Longo e Contínuo: Bzzzzt!)
+      tone(pinoBuzzer, 400); // Som bem grave de erro
       delay(800);            // Mantém o barulho por quase 1 segundo
-      noTone(pinoBuzzer);    // Desliga o som
+      noTone(pinoBuzzer);    
 
-      // 4. Apaga o LED Vermelho
-      digitalWrite(pinoLedVermelho, LOW);
+      digitalWrite(pinoLedVermelho, LOW); // Apaga o LED Vermelho
     }
   }
 }
