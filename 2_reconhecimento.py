@@ -4,9 +4,10 @@ import os
 import serial
 import time
 from pathlib import Path
+from collections import deque
 
 # --- CONFIGURAÇÃO DA PORTA SERIAL DO ARDUINO ---
-porta_arduino = 'COM3'
+porta_arduino = 'COM5'  # Se mudar no gerenciador, altere aqui (ex: 'COM4')
 baud_rate = 9600
 
 try:
@@ -41,10 +42,12 @@ for arquivo in pasta_fotos.glob("*.jpg"):
         if nome_arquivo.startswith("pessoa"):
             partes = nome_arquivo.split(".")
 
+            # Lemos a imagem como bytes puros para evitar erros com acentos na pasta
             dados_imagem = np.fromfile(str(arquivo.resolve()), dtype=np.uint8)
             imagem = cv2.imdecode(dados_imagem, cv2.IMREAD_GRAYSCALE)
 
             if imagem is not None and imagem.size > 0:
+                # 🛠️ CORREÇÃO CRÍTICA: Recuperando o índice [1] do ID da foto corretamente
                 id_pessoa = int(partes[1])
                 faces.append(imagem)
                 labels.append(id_pessoa)
@@ -53,6 +56,7 @@ for arquivo in pasta_fotos.glob("*.jpg"):
 
 if len(faces) == 0:
     print("Erro: Nenhuma imagem valida pôde ser lida para realizar o treinamento.")
+    print("Verifique se os arquivos dentro de 'fotos_treino' comecam com a palavra 'pessoa'.")
     exit()
 
 labels = np.array(labels)
@@ -65,33 +69,22 @@ print("Treinamento concluido com sucesso!")
 CADASTRADO_OPENCV = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 classificador = cv2.CascadeClassifier(CADASTRADO_OPENCV)
 
-# --- INICIALIZAÇÃO DE CÂMERA ---
-print("Buscando sua webcam externa nos canais do Windows...")
-camera = None
-configuracoes_camera = [
-    (0, cv2.CAP_DSHOW),
-    (1, cv2.CAP_DSHOW),
-    (0, None),
-    (1, None)
-]
+# --- INICIALIZAÇÃO DIRETA DA CÂMERA ---
+print("Iniciando sua webcam...")
+camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
-for indice, driver in configuracoes_camera:
-    if driver is not None:
-        camera = cv2.VideoCapture(indice, driver)
-    else:
-        camera = cv2.VideoCapture(indice)
+if not camera.isOpened():
+    camera.release()
+    camera = cv2.VideoCapture(1, cv2.CAP_DSHOW)
 
-    if camera.isOpened():
-        sucesso, teste_frame = camera.read()
-        if sucesso:
-            print(f"Webcam ativada com sucesso no indice {indice}!")
-            break
-        camera.release()
-    else:
-        camera.release()
+if not camera.isOpened():
+    camera.release()
+    camera = cv2.VideoCapture(0)
 
-if camera is None or not camera.isOpened():
+if not camera.isOpened():
     print("\n[ERRO CRÍTICO]: Nao foi possivel abrir a sua camera.")
+    if conexao_arduino:
+        conexao_arduino.close()
     exit()
 
 # --- CONFIGURAÇÃO DOS USUÁRIOS DO GRUPO ---
@@ -101,8 +94,12 @@ nomes = {
     2: "Nathan"
 }
 
+# Histórico para o filtro de estabilização de imagem
+historico_reconhecimento = deque(maxlen=10)
+
 ultimo_envio = 0
-intervalo_envio = 6
+ultimo_comando = None
+intervalo_envio = 6  # so limita a REPETICAO do mesmo comando; comando novo sai na hora
 
 # --- LOOP PRINCIPAL DO SISTEMA ---
 while True:
@@ -114,49 +111,69 @@ while True:
         break
 
     cinza = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    # Detecção equilibrada e suave para evitar variações bruscas
-    rostos = classificador.detectMultiScale(cinza, scaleFactor=1.1, minNeighbors=8)
+    rostos = classificador.detectMultiScale(cinza, scaleFactor=1.08, minNeighbors=8)
 
     tempo_atual = time.time()
+
+    if len(rostos) == 0:
+        if len(historico_reconhecimento) > 0:
+            historico_reconhecimento.popleft()
 
     for (x, y, w, h) in rostos:
         rosto_cortado = cinza[y:y + h, x:x + w]
         rosto_redimensionado = cv2.resize(rosto_cortado, (100, 100))
 
-        # Equaliza o histograma do rosto capturado para corrigir variações de luz
-        rosto_equalizado = cv2.equalizeHist(rosto_redimensionado)
+        id_previsto, confianca = reconhecedor.predict(rosto_redimensionado)
 
-        id_previsto, confianca = reconhecedor.predict(rosto_equalizado)
+        # Usando limite equilibrado em 82 para o filtro atuar com estabilidade
+        if confianca < 82 and id_previsto in ids_autorizados:
+            historico_reconhecimento.append(id_previsto)
+        else:
+            historico_reconhecimento.append(-1)
 
-        # 🛠️ AJUSTE PERFEITO: Limite em 90 para te dar tolerância à iluminação sem liberar invasores
-        if confianca < 90 and id_previsto in ids_autorizados:
-            nome = nomes.get(id_previsto, f"ID {id_previsto}")
-            cor = (0, 255, 0)  # Verde
+        contagem_vitor = historico_reconhecimento.count(1)
+        contagem_nathan = historico_reconhecimento.count(2)
 
+        if contagem_vitor >= 6:
+            nome = nomes[1]
+            cor = (0, 255, 0)
+            autorizado = True
+        elif contagem_nathan >= 6:
+            nome = nomes[2]
+            cor = (0, 255, 0)
+            autorizado = True
+        else:
+            nome = "Desconhecido / Bloqueado"
+            cor = (0, 0, 255)
+            autorizado = False
+
+        if autorizado:
             print("\n=============================================")
             print(f"   ACESSO LIBERADO: BEM-VINDO, {nome.upper()}!   ")
             print("=============================================\n")
 
-            if conexao_arduino and (tempo_atual - ultimo_envio > intervalo_envio):
+            if conexao_arduino and (ultimo_comando != b'1' or tempo_atual - ultimo_envio > intervalo_envio):
                 try:
                     conexao_arduino.write(b'1')
                     ultimo_envio = tempo_atual
+                    ultimo_comando = b'1'
                 except Exception:
                     pass
         else:
-            nome = "Desconhecido / Bloqueado"
-            cor = (0, 0, 255)  # Vermelho
-
             print("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             print("   ALERTA: ACESSO NEGADO / ALVO BLOQUEADO    ")
             print("   USUARIO NAO RECONHECIDO NO BANCO DE DADOS ")
             print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
 
-            if conexao_arduino and (tempo_atual - ultimo_envio > intervalo_envio):
+            # So nega depois que o historico encheu, para nao mandar '0'
+            # enquanto o filtro ainda esta reconhecendo uma pessoa autorizada
+            filtro_confirmou = len(historico_reconhecimento) == historico_reconhecimento.maxlen
+
+            if conexao_arduino and filtro_confirmou and (ultimo_comando != b'0' or tempo_atual - ultimo_envio > intervalo_envio):
                 try:
                     conexao_arduino.write(b'0')
                     ultimo_envio = tempo_atual
+                    ultimo_comando = b'0'
                 except Exception:
                     pass
 

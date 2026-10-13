@@ -1,66 +1,93 @@
-#include <Servo.h> // Biblioteca nativa para controlar o Servo Motor
+// Fechadura com reconhecimento facial
+// Recebe comandos do teste.py pela porta serial (9600 baud):
+//   '1' -> acesso liberado  (abre a trava, LED verde, bip curto)
+//   '0' -> acesso negado    (LED vermelho, bip longo)
 
-// --- DEFINIÇÃO DOS PINOS ---
-const int pinoLedVerde    = 2;  // LED que pisca no acesso liberado
-const int pinoLedVermelho = 3;  // LED que acende no acesso negado
-const int pinoBuzzer      = 4;  // Buzzer para os efeitos sonoros
-const int pinoServo       = 5;  // Pino de sinal do Servo Motor
+#include <Servo.h>
 
-Servo meuServo; 
+// --- PINOS ---
+const int PINO_SERVO     = 2;
+const int PINO_RELE      = 7;   // use se a trava for solenoide (via modulo rele)
+const int PINO_LED_VERDE = 4;
+const int PINO_LED_VERM  = 3;
+const int PINO_BUZZER    = 5;
+
+// --- AJUSTES ---
+const int ANGULO_FECHADO = 0;   // travado (calibrado)
+const int ANGULO_ABERTO  = 90;  // destravado (calibrado)
+const unsigned long TEMPO_ABERTO = 3000;  // ms que o servo fica aberto e o LED verde aceso
+const unsigned long TEMPO_ALERTA = 2000;  // ms do LED vermelho aceso
+
+Servo trava;
+unsigned long abriuEm = 0;
+unsigned long alertaEm = 0;
+bool aberta = false;
+bool alerta = false;
 
 void setup() {
-  pinMode(pinoLedVerde, OUTPUT);
-  pinMode(pinoLedVermelho, OUTPUT);
-  pinMode(pinoBuzzer, OUTPUT);
+  Serial.begin(9600);
 
-  meuServo.attach(pinoServo);
+  pinMode(PINO_RELE, OUTPUT);
+  pinMode(PINO_LED_VERDE, OUTPUT);
+  pinMode(PINO_LED_VERM, OUTPUT);
+  pinMode(PINO_BUZZER, OUTPUT);
 
-  // Tudo começa desligado e trancado (0 graus)
-  digitalWrite(pinoLedVerde, LOW);
-  digitalWrite(pinoLedVermelho, LOW);
-  digitalWrite(pinoBuzzer, LOW);
-  meuServo.write(0); 
+  trava.attach(PINO_SERVO);
+  fechar();
 
-  Serial.begin(9600); // Inicializa a comunicação com o Python
+  Serial.println("Arduino pronto");
 }
 
 void loop() {
   if (Serial.available() > 0) {
-    char sinalRecebido = Serial.read(); 
+    char comando = Serial.read();
 
-    // --- CASO 1: VITOR OU NATHAN RECONHECIDOS (Sinal '1') ---
-    if (sinalRecebido == '1') {
-      meuServo.write(90); // Gira o servo para abrir a tranca
-
-      // Efeito Sonoro Alegre (Bip Duplo Rápido e Agudo: Bip-Bip!)
-      tone(pinoBuzzer, 1500);            // Som agudo
-      digitalWrite(pinoLedVerde, HIGH);  // Acende LED Verde
-      delay(150);
-      noTone(pinoBuzzer);
-      digitalWrite(pinoLedVerde, LOW);   // Apaga LED Verde (efeito pisca)
-      delay(100);
-      
-      tone(pinoBuzzer, 1800);            // Som mais agudo ainda
-      digitalWrite(pinoLedVerde, HIGH);  // Pisca o LED Verde de novo
-      delay(150);
-      noTone(pinoBuzzer);
-      digitalWrite(pinoLedVerde, LOW);
-
-      delay(4000); // Mantém a porta aberta por 4 segundos
-      meuServo.write(0); // Tranca novamente
+    if (comando == '1') {
+      abrir();
+    } else if (comando == '0') {
+      negar();
     }
-
-    // --- CASO 2: DESCONHECIDO DETECTADO (Sinal '0') ---
-    else if (sinalRecebido == '0') {
-      meuServo.write(0); // Garante que continua trancado
-      digitalWrite(pinoLedVermelho, HIGH); // Acende o LED Vermelho Fixo
-
-      // Efeito Sonoro de Alerta (Som Grave, Longo e Contínuo: Bzzzzt!)
-      tone(pinoBuzzer, 400); // Som bem grave de erro
-      delay(800);            // Mantém o barulho por quase 1 segundo
-      noTone(pinoBuzzer);    
-
-      digitalWrite(pinoLedVermelho, LOW); // Apaga o LED Vermelho
-    }
+    // outros caracteres (ex: '\n') sao ignorados
   }
+
+  // Fecha automaticamente depois de TEMPO_ABERTO, sem travar o loop com delay()
+  if (aberta && millis() - abriuEm >= TEMPO_ABERTO) {
+    fechar();
+  }
+
+  if (alerta && millis() - alertaEm >= TEMPO_ALERTA) {
+    digitalWrite(PINO_LED_VERM, LOW);
+    alerta = false;
+  }
+}
+
+void abrir() {
+  trava.write(ANGULO_ABERTO);
+  digitalWrite(PINO_RELE, HIGH);
+  digitalWrite(PINO_LED_VERDE, HIGH);
+  digitalWrite(PINO_LED_VERM, LOW);
+  alerta = false;
+  tone(PINO_BUZZER, 2000, 150);
+
+  aberta = true;
+  abriuEm = millis();
+  Serial.println("ACESSO LIBERADO");
+}
+
+void fechar() {
+  trava.write(ANGULO_FECHADO);
+  digitalWrite(PINO_RELE, LOW);
+  digitalWrite(PINO_LED_VERDE, LOW);
+  aberta = false;
+}
+
+void negar() {
+  if (aberta) return;  // nao interrompe uma liberacao em andamento
+
+  digitalWrite(PINO_LED_VERM, HIGH);
+  tone(PINO_BUZZER, 400, 600);
+
+  alerta = true;
+  alertaEm = millis();
+  Serial.println("ACESSO NEGADO");
 }
